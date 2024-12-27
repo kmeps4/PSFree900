@@ -1,4 +1,4 @@
-/* Copyright (C) 2023 anonymous
+/* Copyright (C) 2023-2024 anonymous
 
 This file is part of PSFree.
 
@@ -28,10 +28,10 @@ import * as o from './offset.mjs';
 
 // put the sycall names that you want to use here
 export const syscall_map = new Map(Object.entries({
-    'close': 6,
+    'close' : 6,
     'setuid' : 23,
     'getuid' : 24,
-    'mprotect': 74,
+    'mprotect' : 74,
     'socket' : 97,
     'fchmod' : 124,
     'mlock' : 203,
